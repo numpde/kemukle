@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>SMILES Viewer</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    /* Simple, responsive layout */
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: 100%;
+      display: flex;
+      gap: 10px;
+      padding: 10px 20px;
+      background: #f5f5f5;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+      box-sizing: border-box;
+    }
+
+    header input {
+      flex: 1;
+      padding: 6px;
+      font-size: 14px;
+    }
+
+    header button {
+      padding: 6px 12px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    canvas {
+      margin-top: 20px;
+      border: 1px solid #333;
+      width: 300px;  /* Display size */
+      height: 300px;
+    }
+
+    .message {
+      margin-top: 20px;
+      color: gray;
+      text-align: center;
+      max-width: 90%;
+      word-break: break-all;
+    }
+
+    @media (min-width: 500px) {
+      canvas {
+        width: 400px;
+        height: 400px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Top bar with editable SMILES -->
+  <header>
+    <input id="smiles-input" placeholder="Enter SMILES …" />
+    <button id="update-btn">Update URL</button>
+  </header>
+
+  <!-- Molecule canvas -->
+  <canvas id="canvas" width="800" height="800"></canvas>
+  <div id="status" class="message"></div>
+
+  <!-- SmilesDrawer via CDN (2.0.1 is light‑weight & works offline on GH Pages) -->
+  <script src="https://cdn.jsdelivr.net/npm/smiles-drawer@2.0.1/dist/smiles-drawer.min.js"></script>
+
+  <script>
+    (function () {
+      // Initialise drawer – keep internal resolution high for HiDPI screens.
+      const drawer = new SmilesDrawer.Drawer({ width: 800, height: 800 });
+
+      // DOM nodes
+      const inputEl = document.getElementById("smiles-input");
+      const statusEl = document.getElementById("status");
+      const canvas = document.getElementById("canvas");
+      const ctx = canvas.getContext("2d");
+
+      // Read current ?smiles=… value (URL‑encoded to be safe)
+      function getSmilesFromUrl() {
+        return decodeURIComponent(new URLSearchParams(window.location.search).get("smiles") || "");
+      }
+
+      // Render a SMILES string (or show errors)
+      function drawSmiles(smiles) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        if (!smiles) {
+          statusEl.textContent = "Add ?smiles=<SMILES> to the URL or use the input above.";
+          return;
+        }
+
+        statusEl.textContent = "Rendering …";
+        SmilesDrawer.parse(
+          smiles,
+          (tree) => {
+            drawer.draw(tree, canvas, "light");
+            statusEl.textContent = "";
+          },
+          (err) => {
+            statusEl.textContent = "Invalid SMILES: " + err.message;
+          }
+        );
+      }
+
+      // Populate input & first render
+      const initialSmiles = getSmilesFromUrl();
+      inputEl.value = initialSmiles;
+      drawSmiles(initialSmiles);
+
+      // Update handler – rewrite URL in‑place (no reload) + redraw
+      document.getElementById("update-btn").addEventListener("click", () => {
+        const newSmiles = inputEl.value.trim();
+        const url = new URL(window.location);
+
+        if (newSmiles) {
+          url.searchParams.set("smiles", newSmiles);
+        } else {
+          url.searchParams.delete("smiles");
+        }
+
+        // Push the new param into the address bar without full page reload
+        window.history.replaceState({}, "", url);
+        drawSmiles(newSmiles);
+      });
+    })();
+  </script>
+</body>
+</html>
