@@ -1,0 +1,212 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>¹H/¹³C — Top atoms by ppm window [DRAFT]</title>
+<style>
+  :root { --gap: 12px; --card-w: 180px; }
+  body { font-family: system-ui, sans-serif; margin: 20px; color: #222; }
+  h1 { font-size: 18px; margin: 0 0 10px 0; }
+  .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+  .hint { color: #666; font-size: 13px; }
+  #slider { width: 420px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-w), 1fr)); gap: var(--gap); margin-top: 12px; }
+  .card { border: 1px solid #e4e4e4; border-radius: 10px; padding: 8px; background: #fff; }
+  .imgbox { width: 100%; aspect-ratio: 1/1; background: #f6f6f7; border-radius: 8px; display: grid; place-items: center; overflow: hidden; }
+  .imgbox img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .noimg { color: #999; font-size: 12px; }
+  .cap { margin-top: 8px; font-size: 12px; line-height: 1.25; color: #333; word-break: break-word; }
+  .muted { color: #888; }
+  #log { margin-top: 16px; border: 1px solid #eee; padding: 10px; border-radius: 8px; background: #fafafa; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; }
+  .log-info { color: #1a5; } .log-warn { color: #a60; } .log-error { color: #c11; }
+</style>
+
+<h1>Top atoms by ppm window</h1>
+
+<div class="row">
+  <label>Element
+    <select id="element">
+      <option value="H" selected>¹H</option>
+      <option value="C">¹³C</option>
+    </select>
+  </label>
+  <input id="slider" type="range" />
+  <div id="readout" class="hint"></div>
+</div>
+
+<div class="row">
+  <div class="hint">
+    Half-width: <b id="halfWidth">0.20</b> ppm • Top <b id="topN">20</b> by <b>strength_pos</b> (tie: size)
+  </div>
+</div>
+
+<div id="results" class="grid"></div>
+
+<h2 style="font-size:14px;margin-top:18px;">Logs</h2>
+<div id="log"></div>
+
+<script>
+/* ===== Config (paths RELATIVE to this HTML under …/edu/) ===== */
+const JSON_BASE =
+  "b_cluster/a_enumerate/dataset=default__at_most=256/" +
+  "runs__proart__full__2025-11-18_08-29-18_MultiAtomTypeNMRModel_v4__checkpoints__epoch_00100.pt/" +
+  "atoms.parquet/";
+const jsonUrlFor = (E) => JSON_BASE + E + "/groups__centrality.json";
+
+/* Element-specific ppm ranges and display */
+const CONFIG = {
+  H: { min: 0, max: 12, step: 0.01, init: 1.50, half: 0.20, fmt: (x)=>Number(x).toFixed(2) },
+  C: { min: 0, max: 220, step: 0.10, init: 170,  half: 5.0, fmt: (x)=>Number(x).toFixed(1) },
+};
+
+const TOP_N = 20;
+const METRIC = "strength_pos";
+
+/* ===== Logging ===== */
+const $log = document.getElementById("log");
+const info = (m,o)=>{ const d=document.createElement("div"); d.className="log-info"; d.textContent=`[INFO] ${m}`; $log.appendChild(d); $log.scrollTop=$log.scrollHeight; o===undefined?console.log(m):console.log(m,o); };
+const warn = (m,o)=>{ const d=document.createElement("div"); d.className="log-warn"; d.textContent=`[WARN] ${m}`; $log.appendChild(d); $log.scrollTop=$log.scrollHeight; o===undefined?console.warn(m):console.warn(m,o); };
+const error= (m,o)=>{ const d=document.createElement("div"); d.className="log-error";d.textContent=`[ERROR] ${m}`; $log.appendChild(d); $log.scrollTop=$log.scrollHeight; o===undefined?console.error(m):console.error(m,o); };
+
+/* ===== UI refs ===== */
+const $elt     = document.getElementById("element");
+const $slider  = document.getElementById("slider");
+const $readout = document.getElementById("readout");
+const $results = document.getElementById("results");
+document.getElementById("topN").textContent = String(TOP_N);
+
+/* ===== Slider mapping (NMR: left=high ppm → right=low ppm) ===== */
+let CURRENT_E = "H";
+let DATA = [];
+let IMG_BASE = "";
+let SLIDER_STEPS = 0;  // integer steps resolution for current element
+
+function cfg() { return CONFIG[CURRENT_E]; }
+function setSliderResolution() {
+  const c = cfg();
+  SLIDER_STEPS = Math.round((c.max - c.min) / c.step); // e.g., H: 1200, C: 2200
+  $slider.min = 0;
+  $slider.max = SLIDER_STEPS;
+  $slider.step = 1;
+}
+function setSliderFromCenter(centerPpm) {
+  const c = cfg();
+  const u = (c.max - centerPpm) / (c.max - c.min); // 0..1 (left high → right low)
+  const val = Math.min(SLIDER_STEPS, Math.max(0, Math.round(u * SLIDER_STEPS)));
+  $slider.value = String(val);
+}
+function getCenterFromSlider() {
+  const c = cfg();
+  const u = Number($slider.value) / SLIDER_STEPS;   // 0..1
+  return c.max - u * (c.max - c.min);               // invert to ppm
+}
+
+function applySlider(E) {
+  CURRENT_E = E;
+  const c = cfg();
+  setSliderResolution();
+  setSliderFromCenter(c.init);
+  document.getElementById("halfWidth").textContent = c.half.toFixed(2);
+  info(`slider mapping: left=${c.max} ppm → right=${c.min} ppm (steps=${SLIDER_STEPS})`);
+}
+
+/* ===== Data & image base ===== */
+async function loadData(E) {
+  const jsonRel = jsonUrlFor(E);
+  const absJson = new URL(jsonRel, document.baseURI);
+
+  info(`element = ${E}`);
+  info(`JSON = ${absJson.href}`);
+
+  // Derive image base from JSON path:
+  IMG_BASE = absJson.pathname
+    .replace(/\/b_cluster\//, "/c_pictures/b_cluster/")
+    .replace(new RegExp(`/${E}/groups__centrality\\.json$`), `/${E}/groups__centrality.parquet/`);
+  info(`IMG_BASE = ${IMG_BASE}`);
+
+  const resp = await fetch(absJson.href + (absJson.search ? "&" : "?") + "ts=" + Date.now(), { cache: "no-store" });
+  info(`fetch status = ${resp.status} ${resp.statusText}`);
+  if (!resp.ok) {
+    const body = await resp.text().catch(()=> "");
+    error(`non-OK body[0:200]: ${body.slice(0,200)}`);
+    throw new Error(`Failed to load JSON: ${resp.status}`);
+  }
+
+  const json = await resp.json();
+  if (!Array.isArray(json)) throw new Error("Expected top-level Array");
+
+  for (const r of json) {
+    r.gid = Number(r.gid);
+    r.shift = Number(r.shift);
+    r.atoms = Array.isArray(r.atoms) ? r.atoms.map(Number) : [];
+    r.size = Number(r.size ?? r.atoms.length);
+    r[METRIC] = Number(r[METRIC] ?? 0);
+  }
+  DATA = json;
+  info(`loaded ${DATA.length} rows`);
+}
+
+function imageForGroup(row) {
+  if (!row.atoms || row.atoms.length === 0) return "";
+  const atomId = row.atoms[0];
+  return new URL(IMG_BASE + `atom_group=${row.gid}/atom_id=${atomId}.png`, location.origin).href;
+}
+
+function update() {
+  const c = cfg();
+  const center = getCenterFromSlider();
+  const lo = center - c.half, hi = center + c.half;
+  $readout.textContent = `Center: ${c.fmt(center)} ppm | Window: [${c.fmt(lo)}, ${c.fmt(hi)}] ppm`;
+
+  const win = DATA.filter(d => d.shift >= lo && d.shift <= hi);
+  win.sort((a,b) => {
+    const d = (b[METRIC] ?? 0) - (a[METRIC] ?? 0);
+    return d !== 0 ? d : (b.size ?? 0) - (a.size ?? 0);
+  });
+  const top = win.slice(0, TOP_N);
+
+  info(`update: E=${CURRENT_E} center=${c.fmt(center)} candidates=${win.length} showing=${top.length}`);
+
+  $results.innerHTML = "";
+  for (let k = 0; k < top.length; k++) {
+    const row = top[k];
+    const img = imageForGroup(row);
+
+    const card = document.createElement("div"); card.className = "card";
+    const imgbox = document.createElement("div"); imgbox.className = "imgbox";
+    if (img) {
+      const el = document.createElement("img"); el.loading = "lazy"; el.alt = `atom_group=${row.gid}`; el.src = img;
+      el.addEventListener("error", () => warn(`image failed: ${img}`));
+      imgbox.appendChild(el);
+    } else {
+      const ph = document.createElement("div"); ph.className = "noimg"; ph.textContent = "no image";
+      imgbox.appendChild(ph);
+    }
+    const cap = document.createElement("div"); cap.className = "cap";
+    cap.innerHTML = `<b>#${k+1}</b> &nbsp; atom_group=${row.gid} (#=${row.size})<br>` +
+                    `shift=${c.fmt(row.shift)} ppm <br>` +
+                    `<span class="muted">${METRIC}=${c.fmt(row[METRIC])}</span>`;
+    card.appendChild(imgbox); card.appendChild(cap); $results.appendChild(card);
+  }
+}
+
+/* ===== Boot ===== */
+(async () => {
+  try {
+    applySlider(CURRENT_E);
+  } catch (e) { error(e.message || String(e)); }
+
+  try {
+    await loadData(CURRENT_E);
+    update();
+
+    $slider.addEventListener("input", update);
+    $elt.addEventListener("change", async () => {
+      applySlider($elt.value);
+      await loadData($elt.value);
+      update();
+    });
+  } catch (e) {
+    error(e.message || String(e));
+    $results.innerHTML = `<div class="hint">Failed to load JSON or images. See logs below.</div>`;
+  }
+})();
+</script>
