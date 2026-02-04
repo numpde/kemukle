@@ -49,6 +49,10 @@
       align-items: center;
     }
 
+    .toolbar > * {
+      min-width: 0;
+    }
+
     input, button {
       font: inherit;
       padding: 10px 12px;
@@ -69,6 +73,42 @@
     button:disabled {
       opacity: .55;
       cursor: not-allowed;
+    }
+
+    #run.attn-blink {
+      animation: runBlink 0.85s ease-in-out 5;
+    }
+
+    @keyframes runBlink {
+      0%, 100% {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 0 rgba(234, 179, 8, 0);
+        filter: brightness(1);
+      }
+      50% {
+        border-color: #eab308;
+        box-shadow:
+          0 0 0 3px rgba(234, 179, 8, 0.55),
+          0 0 0 7px rgba(234, 179, 8, 0.22);
+        filter: brightness(1.12);
+      }
+    }
+
+    #timeline.attn-blink {
+      animation: timelineBlink 0.85s ease-in-out 4;
+    }
+
+    @keyframes timelineBlink {
+      0%, 100% {
+        box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+        filter: brightness(1);
+      }
+      50% {
+        box-shadow:
+          0 0 0 3px rgba(37, 99, 235, 0.35),
+          0 0 0 7px rgba(37, 99, 235, 0.16);
+        filter: brightness(1.08);
+      }
     }
 
     .pill {
@@ -224,6 +264,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      line-height: 1.2;
     }
 
     .legend-box {
@@ -397,6 +438,56 @@
         grid-template-columns: 1fr;
       }
     }
+
+    @media (max-width: 760px) {
+      .wrap {
+        padding: 12px;
+      }
+
+      .toolbar {
+        grid-template-columns: 1fr 1fr auto;
+        grid-template-areas:
+          "smiles smiles smiles"
+          "seed run status";
+      }
+
+      #smiles {
+        grid-area: smiles;
+      }
+
+      #seed {
+        grid-area: seed;
+      }
+
+      #run {
+        grid-area: run;
+      }
+
+      #status {
+        grid-area: status;
+        justify-self: end;
+      }
+
+      .controls {
+        flex-wrap: wrap;
+      }
+
+      #timeline {
+        order: 2;
+        flex: 1 1 100%;
+        min-width: 0;
+      }
+
+      #disp-step {
+        order: 3;
+        width: auto;
+        margin-left: auto;
+      }
+
+      .live-smiles-overlay {
+        max-width: calc(100% - 32px);
+      }
+    }
   </style>
 </head>
 <body>
@@ -557,6 +648,10 @@
   let VIEW_MOL = null;
   let PLAY_TIMER = null;
   let LAST_RUN_SIGNATURE = null;
+  let HAS_COMPUTED = false;
+  let RUN_BLINK_TIMEOUT = null;
+  let HAS_BLINKED_TIMELINE = false;
+  let TIMELINE_BLINK_TIMEOUT = null;
 
   function log(msg, type = "info") {
     const t = new Date().toISOString().slice(11, 19);
@@ -579,10 +674,67 @@
   function updateRunEnabled() {
     if (!RDKit) {
       el.run.disabled = true;
+      updateRunBlink();
       return;
     }
     const sig = getRunSignature();
     el.run.disabled = sig === LAST_RUN_SIGNATURE;
+    updateRunBlink();
+  }
+
+  function updateRunBlink() {
+    if (RUN_BLINK_TIMEOUT) {
+      clearTimeout(RUN_BLINK_TIMEOUT);
+      RUN_BLINK_TIMEOUT = null;
+    }
+    el.run.classList.remove("attn-blink");
+
+    const shouldBlink = !!RDKit && !HAS_COMPUTED && !el.run.disabled;
+    if (!shouldBlink) return;
+
+    // Draw attention briefly until the first successful computation.
+    el.run.classList.add("attn-blink");
+    RUN_BLINK_TIMEOUT = setTimeout(() => {
+      el.run.classList.remove("attn-blink");
+      RUN_BLINK_TIMEOUT = null;
+    }, 4500);
+  }
+
+  function triggerTimelineBlink() {
+    if (TIMELINE_BLINK_TIMEOUT) {
+      clearTimeout(TIMELINE_BLINK_TIMEOUT);
+      TIMELINE_BLINK_TIMEOUT = null;
+    }
+    el.timeline.classList.remove("attn-blink");
+    if (el.timeline.disabled) return;
+    el.timeline.classList.add("attn-blink");
+    TIMELINE_BLINK_TIMEOUT = setTimeout(() => {
+      el.timeline.classList.remove("attn-blink");
+      TIMELINE_BLINK_TIMEOUT = null;
+    }, 3600);
+  }
+
+  function fitRandomSmilesText() {
+    const node = el.dispSmiles;
+    if (!node) return;
+
+    const maxSize = 13;
+    const minSize = 8;
+    const step = 0.5;
+    node.style.fontSize = `${maxSize}px`;
+
+    const txt = (node.textContent || "").trim();
+    if (!txt || txt === "-") {
+      return;
+    }
+    if (node.clientWidth <= 0) {
+      return;
+    }
+    let size = maxSize;
+    while (node.scrollWidth > node.clientWidth && size > minSize) {
+      size -= step;
+      node.style.fontSize = `${size}px`;
+    }
   }
 
   class Mulberry32 {
@@ -1301,6 +1453,7 @@
       }
     }
     el.dispSmiles.textContent = liveSmiles || "-";
+    fitRandomSmilesText();
 
     const curEvent = TRACE[clamped];
     const isPhase1 = curEvent && (curEvent.event === "init" || String(curEvent.event).startsWith("p1_"));
@@ -1310,6 +1463,7 @@
   }
 
   function runClick() {
+    el.run.classList.remove("attn-blink");
     LAST_RUN_SIGNATURE = getRunSignature();
     updateRunEnabled();
 
@@ -1353,6 +1507,13 @@
       el.traceOut.textContent = JSON.stringify(out.trace, null, 2);
       el.initOut.textContent = JSON.stringify(out.trace[0], null, 2);
       setupReplay(out.trace);
+      const firstSuccessfulCompute = !HAS_COMPUTED;
+      HAS_COMPUTED = true;
+      if (firstSuccessfulCompute && !HAS_BLINKED_TIMELINE) {
+        triggerTimelineBlink();
+        HAS_BLINKED_TIMELINE = true;
+      }
+      updateRunBlink();
     } catch (e) {
       log(`Run failed: ${e.message || e}`, "bad");
       el.summary.innerHTML = `<span class="bad">Run failed.</span>`;
@@ -1364,6 +1525,7 @@
       }
       el.rdkitLayer.innerHTML = "";
       el.dispSmiles.textContent = "-";
+      fitRandomSmilesText();
       el.dispStep.textContent = "0/0";
       setReplayEnabled(false);
     }
@@ -1375,6 +1537,7 @@
     el.status.className = "pill ok";
     log(`RDKit loaded (${RDKit.version ? RDKit.version() : "unknown version"})`, "ok");
     updateRunEnabled();
+    updateRunBlink();
   }).catch((err) => {
     el.status.textContent = "Load failed";
     el.status.className = "pill bad";
@@ -1395,15 +1558,27 @@
   el.smiles.addEventListener("keydown", runOnEnter);
   el.seed.addEventListener("keydown", runOnEnter);
   el.timeline.addEventListener("input", (evt) => {
+    if (!HAS_COMPUTED) {
+      updateRunBlink();
+    }
     updateReplayStep(Number.parseInt(evt.target.value, 10) || 0);
   });
   el.btnPrev.addEventListener("click", () => {
+    if (!HAS_COMPUTED) {
+      updateRunBlink();
+    }
     updateReplayStep((Number.parseInt(el.timeline.value, 10) || 0) - 1);
   });
   el.btnNext.addEventListener("click", () => {
+    if (!HAS_COMPUTED) {
+      updateRunBlink();
+    }
     updateReplayStep((Number.parseInt(el.timeline.value, 10) || 0) + 1);
   });
   el.btnPlay.addEventListener("click", () => {
+    if (!HAS_COMPUTED) {
+      updateRunBlink();
+    }
     if (!TRACE || !TRACE.length) return;
     if (PLAY_TIMER) {
       stopPlayback();
@@ -1422,10 +1597,21 @@
   });
   window.addEventListener("beforeunload", () => {
     stopPlayback();
+    if (RUN_BLINK_TIMEOUT) {
+      clearTimeout(RUN_BLINK_TIMEOUT);
+      RUN_BLINK_TIMEOUT = null;
+    }
+    if (TIMELINE_BLINK_TIMEOUT) {
+      clearTimeout(TIMELINE_BLINK_TIMEOUT);
+      TIMELINE_BLINK_TIMEOUT = null;
+    }
     if (VIEW_MOL) {
       VIEW_MOL.delete();
       VIEW_MOL = null;
     }
+  });
+  window.addEventListener("resize", () => {
+    window.requestAnimationFrame(fitRandomSmilesText);
   });
 </script>
 </body>
