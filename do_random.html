@@ -1,0 +1,1432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Random SMILES trace explorer</title>
+  <script src="https://unpkg.com/@rdkit/rdkit@latest/Code/MinimalLib/dist/RDKit_minimal.js"></script>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --text: #0f172a;
+      --muted: #475569;
+      --line: #e2e8f0;
+      --accent: #0f172a;
+      --ok: #047857;
+      --warn: #92400e;
+      --bad: #b91c1c;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    .wrap {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+
+    h1 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      letter-spacing: .01em;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr 180px auto auto;
+      gap: 8px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    input, button {
+      font: inherit;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+    }
+
+    button {
+      cursor: pointer;
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+
+    .pill {
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      background: #fff;
+      text-align: center;
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+    }
+
+    .card h2 {
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      border-bottom: 1px solid var(--line);
+      background: #f8fafc;
+    }
+
+    .card pre {
+      margin: 0;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.45;
+      max-height: 620px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #summary {
+      font-size: 13px;
+      line-height: 1.55;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    #summary code {
+      font-size: 12px;
+      background: #eef2ff;
+      padding: 2px 6px;
+      border-radius: 6px;
+    }
+
+    .ok { color: var(--ok); font-weight: 700; }
+    .warn { color: var(--warn); font-weight: 700; }
+    .bad { color: var(--bad); font-weight: 700; }
+
+    .replay-card {
+      margin-top: 0;
+    }
+
+    .intro-card {
+      margin-bottom: 12px;
+    }
+
+    .intro-body {
+      padding: 14px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: #1f2937;
+    }
+
+    .intro-body h3 {
+      margin: 0 0 6px;
+      font-size: 14px;
+      color: #0f172a;
+    }
+
+    .intro-body p {
+      margin: 0 0 10px;
+    }
+
+    .intro-body ul {
+      margin: 0 0 10px 18px;
+      padding: 0;
+    }
+
+    .intro-body li {
+      margin: 0 0 6px;
+    }
+
+    .replay-shell {
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 12px;
+      padding: 12px;
+    }
+
+    #canvas-wrapper {
+      position: relative;
+      min-height: 440px;
+      background-image: radial-gradient(#e5e7eb 1px, transparent 1px);
+      background-size: 20px 20px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    #rdkit-layer {
+      width: 100%;
+      height: 440px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #fff;
+    }
+
+    #rdkit-layer svg {
+      width: 100%;
+      height: 100%;
+      overflow: visible !important;
+    }
+
+    .live-smiles-overlay {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      max-width: 68%;
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      padding: 10px;
+      z-index: 20;
+      pointer-events: none;
+    }
+
+    .live-smiles-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .live-smiles-value {
+      font-size: 13px;
+      color: #111827;
+      min-height: 16px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .legend-box {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 12px;
+      display: flex;
+      gap: 12px;
+      pointer-events: none;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: #334155;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid #ccc;
+    }
+
+    .dot.white { background: #e5e7eb; }
+    .dot.grey { background: #f59e0b; }
+    .dot.black { background: #374151; }
+
+    .replay-side {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .phase-badge {
+      display: inline-block;
+      border: 1px solid #ddd;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #555;
+      background: #eee;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+
+    .phase-1 { background: #d1fae5; color: #065f46; border-color: #a7f3d0; }
+    .phase-2 { background: #dbeafe; color: #1e40af; border-color: #bfdbfe; }
+
+    .mini-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: #64748b;
+      text-transform: uppercase;
+      margin-bottom: 2px;
+    }
+
+    .mini-value {
+      font-size: 12px;
+      color: #0f172a;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    #disp-stack {
+      margin: 0;
+      padding-left: 16px;
+      max-height: 196px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .controls button {
+      padding: 6px 10px;
+      border-radius: 8px;
+    }
+
+    #timeline {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    #disp-step {
+      width: 70px;
+      text-align: right;
+      font-size: 12px;
+      color: #334155;
+    }
+
+    @media (max-width: 1060px) {
+      .replay-shell {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .debug-panel {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }
+
+    details.debug-box {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+      overflow: hidden;
+      align-self: start;
+    }
+
+    details.debug-box summary {
+      list-style: none;
+      cursor: pointer;
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      border-bottom: 1px solid transparent;
+      background: #f8fafc;
+      user-select: none;
+    }
+
+    details.debug-box summary::-webkit-details-marker {
+      display: none;
+    }
+
+    details.debug-box[open] summary {
+      border-bottom-color: var(--line);
+    }
+
+    .debug-content {
+      padding: 0;
+    }
+
+    .debug-content pre {
+      margin: 0;
+      padding: 12px;
+      font-size: 12px;
+      line-height: 1.45;
+      max-height: 280px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    @media (max-width: 1060px) {
+      .debug-panel {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Random SMILES trace explorer</h1>
+  <div class="toolbar">
+    <input
+      id="smiles"
+      value="C1NC2=CC(=C(C=C2S(=O)(=O)N1)S(=O)(=O)N)Cl"
+      placeholder="SMILES, e.g. CCO or c1ccccc1"
+      title="Enter an input SMILES string"
+      aria-label="SMILES input"
+    />
+    <input
+      id="seed"
+      value="1337"
+      placeholder="Seed, e.g. 1337"
+      title="Integer random seed"
+      aria-label="Random seed input"
+    />
+    <button id="run" disabled>Randomize</button>
+    <div id="status" class="pill">Loading RDKit...</div>
+  </div>
+
+  <div class="card replay-card">
+    <h2>Traversal replay</h2>
+    <div class="replay-shell">
+      <div>
+        <div id="canvas-wrapper">
+          <div class="live-smiles-overlay">
+            <div class="live-smiles-label">Random SMILES</div>
+            <div class="live-smiles-value" id="disp-smiles">-</div>
+          </div>
+          <div id="rdkit-layer"></div>
+          <div class="legend-box">
+            <div class="legend-item"><span class="dot white"></span>Unvisited</div>
+            <div class="legend-item"><span class="dot grey"></span>Active</div>
+            <div class="legend-item"><span class="dot black"></span>Finished</div>
+          </div>
+        </div>
+        <div class="controls">
+          <button id="btn-prev" disabled>Prev</button>
+          <button id="btn-play" disabled>Play</button>
+          <button id="btn-next" disabled>Next</button>
+          <input type="range" id="timeline" min="0" value="0" disabled />
+          <div id="disp-step">0/0</div>
+        </div>
+      </div>
+      <div class="replay-side">
+        <div>
+          <div class="mini-label">Phase</div>
+          <div id="phase-badge" class="phase-badge">Waiting...</div>
+        </div>
+        <div>
+          <div class="mini-label">Current Event</div>
+          <div class="mini-value" id="disp-event">-</div>
+          <div class="mini-value" id="disp-detail" style="color:#64748b;">-</div>
+        </div>
+        <div>
+          <div class="mini-label">Recursion Stack</div>
+          <ul id="disp-stack"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card intro-card">
+    <h2>How It Works</h2>
+    <div class="intro-body">
+      <h3>Why randomize?</h3>
+      <p>You usually want a SMILES string to be unique so everyone writes the same string for the same drug. But in machine learning, unique is bad. We actually want chaos. By generating ten different valid strings for a single molecule, we force AI models to learn the actual chemical structure rather than just memorizing text patterns.</p>
+
+      <h3>The graph problem</h3>
+      <p>At its core, a molecule is just a graph: atoms are nodes, bonds are edges. To write a SMILES string, the computer has to flatten that web into a single line of text by walking from atom to atom. This visualizer breaks that walk down into two steps so you can see how the computer handles the tricky parts.</p>
+
+      <h3>Phase 1: The scout</h3>
+      <p>Before writing anything, we have to solve the ring problem. If a computer blindly followed bonds around a ring like benzene, it would loop forever. To fix this, the algorithm runs a quick scout mission using a depth-first search. It sprints through the molecule leaving markers behind. As soon as it hits a marker it placed earlier, it knows it found a loop. It flags that bond as a ring closure, which becomes the numbers in the SMILES string.</p>
+
+      <h3>Phase 2: The build</h3>
+      <p>With the rings marked, the algorithm walks the graph again to generate the text. Since this is a random generator, it rolls a die at every intersection to decide where to go next.</p>
+      <ul>
+        <li>The main path: It prints atom symbols as it walks.</li>
+        <li>Branching: When it hits a fork, it picks one path now and shoves the others into a backpack (a memory stack) to visit later. These saved paths become the branches in parentheses.</li>
+        <li>Ring closures: When it reaches a bond flagged by the scout in phase 1, it stops and prints a number instead of walking across it.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="debug-panel">
+    <details class="debug-box" open>
+      <summary>Summary</summary>
+      <div class="debug-content">
+        <div id="summary">Ready when RDKit loads.</div>
+        <pre id="logOut"></pre>
+      </div>
+    </details>
+    <details class="debug-box" open>
+      <summary>Trace JSON</summary>
+      <div class="debug-content">
+        <pre id="traceOut">Waiting...</pre>
+      </div>
+    </details>
+    <details class="debug-box" open>
+      <summary>Init Preview</summary>
+      <div class="debug-content">
+        <pre id="initOut">-</pre>
+      </div>
+    </details>
+  </div>
+</div>
+
+<script>
+  let RDKit = null;
+
+  const el = {
+    smiles: document.getElementById('smiles'),
+    seed: document.getElementById('seed'),
+    run: document.getElementById('run'),
+    status: document.getElementById('status'),
+    summary: document.getElementById('summary'),
+    logOut: document.getElementById('logOut'),
+    traceOut: document.getElementById('traceOut'),
+    initOut: document.getElementById('initOut'),
+    dispSmiles: document.getElementById('disp-smiles'),
+    rdkitLayer: document.getElementById('rdkit-layer'),
+    timeline: document.getElementById('timeline'),
+    btnPrev: document.getElementById('btn-prev'),
+    btnPlay: document.getElementById('btn-play'),
+    btnNext: document.getElementById('btn-next'),
+    dispStep: document.getElementById('disp-step'),
+    phaseBadge: document.getElementById('phase-badge'),
+    dispEvent: document.getElementById('disp-event'),
+    dispDetail: document.getElementById('disp-detail'),
+    dispStack: document.getElementById('disp-stack'),
+  };
+
+  const AtomColor = { WHITE: 0, GREY: 1, BLACK: 2 };
+  const StackType = {
+    ATOM: "ATOM",
+    BOND: "BOND",
+    RING: "RING",
+    BRANCH_OPEN: "BRANCH_OPEN",
+    BRANCH_CLOSE: "BRANCH_CLOSE",
+  };
+  const MAX_CYCLES = 1000;
+
+  const ELEMENTS = [
+    "*","H","He","Li","Be","B","C","N","O","F","Ne","Na","Mg","Al","Si","P","S","Cl","Ar","K","Ca",
+    "Sc","Ti","V","Cr","Mn","Fe","Co","Ni","Cu","Zn","Ga","Ge","As","Se","Br","Kr","Rb","Sr","Y","Zr",
+    "Nb","Mo","Tc","Ru","Rh","Pd","Ag","Cd","In","Sn","Sb","Te","I","Xe","Cs","Ba","La","Ce","Pr","Nd",
+    "Pm","Sm","Eu","Gd","Tb","Dy","Ho","Er","Tm","Yb","Lu","Hf","Ta","W","Re","Os","Ir","Pt","Au","Hg",
+    "Tl","Pb","Bi","Po","At","Rn","Fr","Ra","Ac","Th","Pa","U","Np","Pu","Am","Cm","Bk","Cf","Es","Fm",
+    "Md","No","Lr","Rf","Db","Sg","Bh","Hs","Mt","Ds","Rg","Cn","Nh","Fl","Mc","Lv","Ts","Og"
+  ];
+  const AROMATIC_LOWER_OK = new Set(["B", "C", "N", "O", "P", "S", "Se", "As"]);
+  const ORGANIC_SUBSET = new Set([5, 6, 7, 8, 9, 15, 16, 17, 35, 53]);
+  let TRACE = null;
+  let VIEW_MOL = null;
+  let PLAY_TIMER = null;
+  let LAST_RUN_SIGNATURE = null;
+
+  function log(msg, type = "info") {
+    const t = new Date().toISOString().slice(11, 19);
+    const tag = type === "ok" ? "OK" : type === "bad" ? "FAIL" : type === "warn" ? "WARN" : "INFO";
+    const cls = type === "ok" ? "ok" : type === "bad" ? "bad" : type === "warn" ? "warn" : "";
+    el.logOut.innerHTML += `[${t}] <span class="${cls}">[${tag}]</span> ${msg}\n`;
+    el.logOut.scrollTop = el.logOut.scrollHeight;
+  }
+
+  function ensureIntSeed(raw) {
+    const n = Number.parseInt(String(raw), 10);
+    if (!Number.isFinite(n)) throw new Error(`Invalid seed: ${raw}`);
+    return n | 0;
+  }
+
+  function getRunSignature() {
+    return `${String(el.smiles.value || "").trim()}||${String(el.seed.value || "").trim()}`;
+  }
+
+  function updateRunEnabled() {
+    if (!RDKit) {
+      el.run.disabled = true;
+      return;
+    }
+    const sig = getRunSignature();
+    el.run.disabled = sig === LAST_RUN_SIGNATURE;
+  }
+
+  class Mulberry32 {
+    constructor(seed) {
+      this.state = seed >>> 0;
+    }
+    nextUInt32() {
+      this.state = (this.state + 0x6D2B79F5) >>> 0;
+      let t = this.state;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return (t ^ (t >>> 14)) >>> 0;
+    }
+    integers(low, high) {
+      if (!(high > low)) throw new Error(`Bad integers range: [${low}, ${high})`);
+      const span = high - low;
+      return low + (this.nextUInt32() % span);
+    }
+  }
+
+  function atomicSymbol(z) {
+    if (!Number.isFinite(z) || z < 0 || z >= ELEMENTS.length) return "*";
+    return ELEMENTS[z];
+  }
+
+  function toAromaticSymbol(sym) {
+    if (AROMATIC_LOWER_OK.has(sym)) return sym.toLowerCase();
+    return sym;
+  }
+
+  class AdjacencyGraph {
+    constructor(commonChemMol, defaults = {}) {
+      const atomDefaults = defaults.atom || {};
+      const bondDefaults = defaults.bond || {};
+
+      this.atoms = (commonChemMol.atoms || []).map((a, idx) => ({ ...atomDefaults, ...a, idx }));
+      this.bonds = (commonChemMol.bonds || []).map((b, idx) => {
+        const withDefaults = { ...bondDefaults, ...b };
+        const atoms = withDefaults.atoms || [];
+        const begin = atoms[0];
+        const end = atoms[1];
+        let order = withDefaults.bo;
+        if (typeof order === "string") order = Number.parseFloat(order);
+        if (!Number.isFinite(order)) order = 1;
+        return { idx, begin, end, order, raw: withDefaults };
+      });
+      this.adj = Array.from({ length: this.atoms.length }, () => []);
+      for (const b of this.bonds) {
+        this.adj[b.begin].push({ bond_idx: b.idx, other_idx: b.end });
+        this.adj[b.end].push({ bond_idx: b.idx, other_idx: b.begin });
+      }
+    }
+
+    getOtherAtomIdx(bondIdx, atomIdx) {
+      const b = this.bonds[bondIdx];
+      return b.begin === atomIdx ? b.end : b.begin;
+    }
+
+    neighbors(atomIdx, bondsInPlay = null) {
+      const arr = this.adj[atomIdx] || [];
+      if (!bondsInPlay) return arr.slice();
+      return arr.filter((x) => bondsInPlay.has(x.bond_idx));
+    }
+
+    connectedComponents() {
+      const seen = new Array(this.atoms.length).fill(false);
+      const comps = [];
+      for (let i = 0; i < this.atoms.length; i++) {
+        if (seen[i]) continue;
+        const comp = [];
+        const q = [i];
+        seen[i] = true;
+        while (q.length) {
+          const cur = q.shift();
+          comp.push(cur);
+          for (const n of this.adj[cur]) {
+            if (!seen[n.other_idx]) {
+              seen[n.other_idx] = true;
+              q.push(n.other_idx);
+            }
+          }
+        }
+        comp.sort((a, b) => a - b);
+        comps.push(comp);
+      }
+      return comps;
+    }
+
+    componentBondSet(atomIds) {
+      const atomSet = new Set(atomIds);
+      const out = new Set();
+      for (const b of this.bonds) {
+        if (atomSet.has(b.begin) && atomSet.has(b.end)) out.add(b.idx);
+      }
+      return out;
+    }
+  }
+
+  function parseMolblockCoords(molBlock, graphAtoms) {
+    const lines = molBlock.split(/\r?\n/);
+    if (!lines[3]) return [];
+    const nAtoms = Number.parseInt(lines[3].slice(0, 3).trim(), 10);
+    if (!Number.isFinite(nAtoms) || nAtoms <= 0) return [];
+    const atoms = [];
+    for (let i = 0; i < nAtoms; i++) {
+      const line = lines[4 + i] || "";
+      const x = Number.parseFloat(line.slice(0, 10));
+      const y = Number.parseFloat(line.slice(10, 20));
+      const sym = (line.slice(31, 34).trim() || atomicSymbol(graphAtoms[i]?.z || 0));
+      atoms.push({ idx: i, symbol: sym, x, y });
+    }
+    return atoms;
+  }
+
+  function rankRandom(rng) {
+    return rng.integers(0, 2 ** 31);
+  }
+
+  function dfsFindCycles(graph, atomIdx, inBondIdx, colors, atomRingClosures, bondsInPlay, rng, trace) {
+    colors[atomIdx] = AtomColor.GREY;
+    trace.push({ event: "p1_visit", atom_idx: atomIdx });
+
+    const possibles = [];
+    for (const n of graph.neighbors(atomIdx, bondsInPlay)) {
+      const bidx = n.bond_idx;
+      if (inBondIdx >= 0 && bidx === inBondIdx) continue;
+      possibles.push({ rank: rankRandom(rng), nbr: n.other_idx, bond_idx: bidx });
+    }
+    possibles.sort((a, b) => a.rank - b.rank);
+    trace.push({
+      event: "p1_decision",
+      atom_idx: atomIdx,
+      candidates: possibles.map((p) => ({ nbr: p.nbr, rank: p.rank })),
+    });
+
+    for (const p of possibles) {
+      const nxt = p.nbr;
+      if (colors[nxt] === AtomColor.WHITE) {
+        trace.push({ event: "p1_traverse", from: atomIdx, to: nxt, bond_idx: p.bond_idx });
+        dfsFindCycles(graph, nxt, p.bond_idx, colors, atomRingClosures, bondsInPlay, rng, trace);
+        trace.push({ event: "p1_backtrack", from: nxt, to: atomIdx, bond_idx: p.bond_idx });
+      } else if (colors[nxt] === AtomColor.GREY) {
+        atomRingClosures[nxt].push(p.bond_idx);
+        atomRingClosures[atomIdx].push(p.bond_idx);
+        trace.push({ event: "p1_cycle_found", from: atomIdx, to: nxt, bond_idx: p.bond_idx });
+      }
+    }
+
+    colors[atomIdx] = AtomColor.BLACK;
+    trace.push({ event: "p1_finish", atom_idx: atomIdx });
+  }
+
+  function dfsBuildStack(
+    graph,
+    atomIdx,
+    inBondIdx,
+    colors,
+    atomRingClosures,
+    cyclesAvailable,
+    stack,
+    atomVisitOrders,
+    bondVisitOrders,
+    atomTraversalBondOrder,
+    bondsInPlay,
+    rng,
+    trace,
+    ringClosureBondMap
+  ) {
+    const seenFromHere = new Set([atomIdx]);
+
+    stack.push({ type: StackType.ATOM, atom_idx: atomIdx });
+    atomVisitOrders[atomIdx] = stack.length;
+    colors[atomIdx] = AtomColor.GREY;
+    trace.push({ event: "p2_visit", atom_idx: atomIdx });
+
+    const travList = [];
+    if (inBondIdx >= 0) travList.push(inBondIdx);
+
+    if (atomRingClosures[atomIdx].length) {
+      const ringsClosed = [];
+      for (const bidx of atomRingClosures[atomIdx]) {
+        travList.push(bidx);
+        const otherIdx = graph.getOtherAtomIdx(bidx, atomIdx);
+        seenFromHere.add(otherIdx);
+
+        if (ringClosureBondMap.has(bidx)) {
+          const ringIdx = ringClosureBondMap.get(bidx);
+          stack.push({ type: StackType.BOND, bond_idx: bidx, number: atomIdx });
+          bondVisitOrders[bidx] = stack.length;
+          stack.push({ type: StackType.RING, number: ringIdx });
+          ringsClosed.push(ringIdx - 1);
+          trace.push({
+            event: "p2_ring_match",
+            from: atomIdx,
+            to: otherIdx,
+            ring_num: ringIdx,
+            bond_idx: bidx,
+          });
+        } else {
+          const freeIdx = cyclesAvailable.findIndex((x) => x);
+          if (freeIdx < 0) throw new Error("Too many rings open at once. SMILES cannot be generated.");
+          cyclesAvailable[freeIdx] = false;
+          const ringIdx = freeIdx + 1;
+          ringClosureBondMap.set(bidx, ringIdx);
+          stack.push({ type: StackType.RING, number: ringIdx });
+          trace.push({ event: "p2_ring_open", atom_idx: atomIdx, ring_num: ringIdx, bond_idx: bidx });
+        }
+      }
+      for (const ridx of ringsClosed) cyclesAvailable[ridx] = true;
+    }
+
+    const possibles = [];
+    for (const n of graph.neighbors(atomIdx, bondsInPlay)) {
+      const bidx = n.bond_idx;
+      if (inBondIdx >= 0 && bidx === inBondIdx) continue;
+      const otherIdx = n.other_idx;
+      if (colors[otherIdx] !== AtomColor.WHITE || seenFromHere.has(otherIdx)) continue;
+      possibles.push({ rank: rankRandom(rng), nbr: otherIdx, bond_idx: bidx });
+    }
+    possibles.sort((a, b) => a.rank - b.rank);
+    trace.push({
+      event: "p2_decision",
+      atom_idx: atomIdx,
+      candidates: possibles.map((p) => ({ nbr: p.nbr, rank: p.rank })),
+    });
+
+    for (let i = 0; i < possibles.length; i++) {
+      const p = possibles[i];
+      if (colors[p.nbr] !== AtomColor.WHITE) continue;
+
+      travList.push(p.bond_idx);
+      if (i + 1 !== possibles.length) {
+        trace.push({ event: "p2_branch_start", atom_idx: atomIdx, branch_idx: i });
+        stack.push({ type: StackType.BRANCH_OPEN, number: i });
+      }
+
+      trace.push({ event: "p2_traverse", from: atomIdx, to: p.nbr, bond_idx: p.bond_idx });
+      stack.push({ type: StackType.BOND, bond_idx: p.bond_idx, number: atomIdx });
+      bondVisitOrders[p.bond_idx] = stack.length;
+
+      dfsBuildStack(
+        graph,
+        p.nbr,
+        p.bond_idx,
+        colors,
+        atomRingClosures,
+        cyclesAvailable,
+        stack,
+        atomVisitOrders,
+        bondVisitOrders,
+        atomTraversalBondOrder,
+        bondsInPlay,
+        rng,
+        trace,
+        ringClosureBondMap
+      );
+
+      trace.push({ event: "p2_backtrack", from: p.nbr, to: atomIdx, bond_idx: p.bond_idx });
+      if (i + 1 !== possibles.length) {
+        stack.push({ type: StackType.BRANCH_CLOSE, number: i });
+        trace.push({ event: "p2_branch_end", atom_idx: atomIdx, branch_idx: i });
+      }
+    }
+
+    atomTraversalBondOrder[atomIdx] = travList;
+    colors[atomIdx] = AtomColor.BLACK;
+    trace.push({ event: "p2_finish", atom_idx: atomIdx });
+  }
+
+  function canonicalTraversal(graph, atomIdx, bondsInPlay, rng, trace) {
+    const nAtoms = graph.atoms.length;
+    const nBonds = graph.bonds.length;
+    const atomRingClosures = Array.from({ length: nAtoms }, () => []);
+    const atomTraversalBondOrder = Array.from({ length: nAtoms }, () => []);
+
+    const tcolors = new Array(nAtoms).fill(AtomColor.WHITE);
+    dfsFindCycles(graph, atomIdx, -1, tcolors, atomRingClosures, bondsInPlay, rng, trace);
+
+    const colors = new Array(nAtoms).fill(AtomColor.WHITE);
+    const cyclesAvailable = Array.from({ length: MAX_CYCLES }, () => true);
+    const stack = [];
+    const atomVisitOrders = new Array(nAtoms).fill(0);
+    const bondVisitOrders = new Array(nBonds).fill(0);
+    const ringClosureBondMap = new Map();
+
+    dfsBuildStack(
+      graph,
+      atomIdx,
+      -1,
+      colors,
+      atomRingClosures,
+      cyclesAvailable,
+      stack,
+      atomVisitOrders,
+      bondVisitOrders,
+      atomTraversalBondOrder,
+      bondsInPlay,
+      rng,
+      trace,
+      ringClosureBondMap
+    );
+
+    return { stack, atomVisitOrders, bondVisitOrders, atomRingClosures, atomTraversalBondOrder };
+  }
+
+  function atomNeedsBrackets(atom) {
+    const z = Number.isFinite(atom.z) ? atom.z : 0;
+    const chg = Number.isFinite(atom.chg) ? atom.chg : 0;
+    const isotope = Number.isFinite(atom.isotope) ? atom.isotope : 0;
+    const nRad = Number.isFinite(atom.nRad) ? atom.nRad : 0;
+    const mapNum = Number.isFinite(atom.mapno) ? atom.mapno : 0;
+
+    if (!ORGANIC_SUBSET.has(z)) return true;
+    if (chg !== 0 || isotope > 0 || nRad > 0) return true;
+    if (mapNum > 0) return true;
+    return false;
+  }
+
+  function atomToken(atom) {
+    const z = Number.isFinite(atom.z) ? atom.z : 0;
+    let sym = atomicSymbol(z);
+    if (atom.aromatic) {
+      sym = toAromaticSymbol(sym);
+    }
+    const needsBracket = atomNeedsBrackets(atom);
+    if (!needsBracket) return sym;
+
+    let out = "[";
+    if (Number.isFinite(atom.isotope) && atom.isotope > 0) out += String(atom.isotope);
+    out += sym;
+    const h = Number.isFinite(atom.impHs) ? atom.impHs : 0;
+    if (h > 0) {
+      out += "H";
+      if (h > 1) out += String(h);
+    }
+    const chg = Number.isFinite(atom.chg) ? atom.chg : 0;
+    if (chg > 0) out += "+" + (chg > 1 ? String(chg) : "");
+    else if (chg < 0) out += "-" + (chg < -1 ? String(Math.abs(chg)) : "");
+    if (Number.isFinite(atom.mapno) && atom.mapno > 0) out += `:${atom.mapno}`;
+    out += "]";
+    return out;
+  }
+
+  function bondToken(bond) {
+    const bo = bond.order;
+    if (Math.abs(bo - 1.5) < 1e-6) return ":";
+    if (bo === 1) return "";
+    if (bo === 2) return "=";
+    if (bo === 3) return "#";
+    if (bo === 4) return "$";
+    return "~";
+  }
+
+  function *generateSmilesTokens(graph, stack) {
+    const ringClosureMap = new Map();
+    const ringClosuresToErase = [];
+
+    for (const elem of stack) {
+      if (elem.type === StackType.ATOM) {
+        for (const rid of ringClosuresToErase) ringClosureMap.delete(rid);
+        ringClosuresToErase.length = 0;
+        yield atomToken(graph.atoms[elem.atom_idx]);
+      } else if (elem.type === StackType.BOND) {
+        yield bondToken(graph.bonds[elem.bond_idx]);
+      } else if (elem.type === StackType.RING) {
+        const rid = elem.number;
+        let closureVal;
+        if (ringClosureMap.has(rid)) {
+          closureVal = ringClosureMap.get(rid);
+          ringClosuresToErase.push(rid);
+        } else {
+          closureVal = 1;
+          const used = new Set(ringClosureMap.values());
+          while (used.has(closureVal)) closureVal += 1;
+          ringClosureMap.set(rid, closureVal);
+        }
+        if (closureVal < 10) yield String(closureVal);
+        else if (closureVal < 100) yield `%${closureVal}`;
+        else yield `%(${closureVal})`;
+      } else if (elem.type === StackType.BRANCH_OPEN) {
+        yield "(";
+      } else if (elem.type === StackType.BRANCH_CLOSE) {
+        yield ")";
+      }
+    }
+  }
+
+  function syncTraceWithSmiles(traceSlice, tokens) {
+    const iter = tokens[Symbol.iterator]();
+    const takeOne = () => {
+      const n = iter.next();
+      if (n.done) throw new Error("Ran out of SMILES tokens while syncing trace.");
+      return n.value;
+    };
+
+    for (const e of traceSlice) {
+      if (e.event === "p2_visit" || e.event === "p2_traverse" || e.event === "p2_ring_open" ||
+          e.event === "p2_branch_start" || e.event === "p2_branch_end") {
+        e.smiles = takeOne();
+      } else if (e.event === "p2_ring_match") {
+        e.smiles = takeOne() + takeOne();
+      }
+    }
+
+    const extra = iter.next();
+    if (!extra.done) throw new Error("Unconsumed SMILES tokens remain after trace sync.");
+  }
+
+  function runLayer2(smi, seed) {
+    const mol = RDKit.get_mol(smi);
+    if (!mol || !mol.is_valid || !mol.is_valid()) {
+      throw new Error("Invalid SMILES.");
+    }
+
+    if (typeof mol.set_new_coords === "function") {
+      mol.set_new_coords();
+    }
+    const molBlock = mol.get_molblock();
+    const json = JSON.parse(mol.get_json());
+    const ccMol = (json.molecules || [])[0];
+    if (!ccMol) throw new Error("No molecule data in get_json().");
+
+    const graph = new AdjacencyGraph(ccMol, json.defaults || {});
+    const coords = parseMolblockCoords(molBlock, graph.atoms);
+    const initAtoms = coords.length ? coords : graph.atoms.map((a) => ({
+      idx: a.idx, symbol: atomicSymbol(Number.isFinite(a.z) ? a.z : 0), x: 0, y: 0,
+    }));
+    const initBonds = graph.bonds.map((b) => ({ idx: b.idx, begin: b.begin, end: b.end }));
+
+    const trace = [{
+      event: "init",
+      atoms: initAtoms,
+      bonds: initBonds,
+      canonical_smiles: (typeof mol.get_smiles === "function" ? mol.get_smiles() : smi),
+      mol_block: molBlock,
+    }];
+
+    const rng = new Mulberry32(seed);
+    const components = graph.connectedComponents();
+    const finalTokens = [];
+
+    for (let ci = 0; ci < components.length; ci++) {
+      const comp = components[ci];
+      const root = comp[rng.integers(0, comp.length)];
+      const bondsInPlay = graph.componentBondSet(comp);
+
+      const startIdx = trace.length;
+      const traversal = canonicalTraversal(graph, root, bondsInPlay, rng, trace);
+      const tokens = Array.from(generateSmilesTokens(graph, traversal.stack));
+      syncTraceWithSmiles(trace.slice(startIdx), tokens);
+      finalTokens.push(...tokens);
+
+      if (ci < components.length - 1) {
+        finalTokens.push(".");
+        for (let i = trace.length - 1; i >= startIdx; i--) {
+          if (trace[i].event.startsWith("p2_") && trace[i].smiles !== undefined) {
+            trace[i].smiles += ".";
+            break;
+          }
+        }
+      }
+    }
+
+    const randomSmiles = finalTokens.join("");
+    let parseable = false;
+    try {
+      const test = RDKit.get_mol(randomSmiles);
+      parseable = !!(test && test.is_valid && test.is_valid());
+      if (test) test.delete();
+    } catch {
+      parseable = false;
+    }
+
+    mol.delete();
+    return { trace, randomSmiles, parseable, nAtoms: graph.atoms.length, nBonds: graph.bonds.length, nFragments: components.length };
+  }
+
+  function stopPlayback() {
+    if (PLAY_TIMER) {
+      clearInterval(PLAY_TIMER);
+      PLAY_TIMER = null;
+    }
+    el.btnPlay.textContent = "Play";
+  }
+
+  function setReplayEnabled(enabled) {
+    el.timeline.disabled = !enabled;
+    el.btnPrev.disabled = !enabled;
+    el.btnPlay.disabled = !enabled;
+    el.btnNext.disabled = !enabled;
+  }
+
+  function setupReplay(trace) {
+    stopPlayback();
+    TRACE = trace;
+
+    if (VIEW_MOL) {
+      VIEW_MOL.delete();
+      VIEW_MOL = null;
+    }
+
+    const init = TRACE[0] || {};
+    if (init.mol_block) {
+      VIEW_MOL = RDKit.get_mol(init.mol_block);
+    } else {
+      const fallbackSmiles = init.canonical_smiles || "";
+      VIEW_MOL = RDKit.get_mol(fallbackSmiles);
+    }
+    if (!VIEW_MOL || !VIEW_MOL.is_valid || !VIEW_MOL.is_valid()) {
+      throw new Error("Could not initialize replay molecule.");
+    }
+
+    el.timeline.min = 0;
+    el.timeline.max = Math.max(0, TRACE.length - 1);
+    el.timeline.value = 0;
+    setReplayEnabled(TRACE.length > 0 && !!VIEW_MOL);
+    updateReplayStep(0);
+  }
+
+  function replayState(step) {
+    const atomStates = {};
+    const p1TraversedBonds = new Set();
+    const p2TraversedBonds = new Set();
+    const p1BondOrder = {};
+    const p2BondOrder = {};
+    let stackLog = [];
+    let p1Order = 0;
+    let p2Order = 0;
+
+    let p2Index = TRACE.findIndex((e) => String(e.event || "").startsWith("p2_"));
+    if (p2Index < 0) p2Index = Number.MAX_SAFE_INTEGER;
+
+    // Keep the full Phase-1 tree visible even while replaying Phase-2.
+    const p1End = Math.min(step, p2Index - 1);
+    for (let i = 0; i <= p1End; i++) {
+      const evt = TRACE[i];
+      if (evt && evt.event === "p1_traverse" && evt.bond_idx !== undefined) {
+        p1TraversedBonds.add(evt.bond_idx);
+        if (p1BondOrder[evt.bond_idx] === undefined) {
+          p1BondOrder[evt.bond_idx] = p1Order++;
+        }
+      }
+    }
+
+    const startLoop = step >= p2Index ? p2Index : 0;
+    for (let i = startLoop; i <= step; i++) {
+      const evt = TRACE[i];
+      if (!evt) continue;
+      const type = String(evt.event || "");
+
+      if (type.includes("visit")) {
+        atomStates[evt.atom_idx] = "GREY";
+      } else if (type.includes("traverse")) {
+        if (type.startsWith("p2_") && evt.bond_idx !== undefined) {
+          p2TraversedBonds.add(evt.bond_idx);
+          if (p2BondOrder[evt.bond_idx] === undefined) {
+            p2BondOrder[evt.bond_idx] = p2Order++;
+          }
+        }
+        if (evt.to !== undefined) {
+          stackLog.push(`-> ${evt.to}`);
+        }
+      } else if (type.includes("backtrack")) {
+        if (evt.from !== undefined) {
+          atomStates[evt.from] = "BLACK";
+        }
+        if (stackLog.length) stackLog.pop();
+      } else if (type.includes("finish")) {
+        atomStates[evt.atom_idx] = "BLACK";
+        if (stackLog.length <= 1) stackLog = [];
+      } else if (type.includes("ring_open")) {
+        stackLog.push(`Ring %${evt.ring_num} Open`);
+      } else if (type.includes("ring_match")) {
+        stackLog.push(`Ring Match %${evt.ring_num}`);
+        if (evt.bond_idx !== undefined) {
+          p2TraversedBonds.add(evt.bond_idx);
+          if (p2BondOrder[evt.bond_idx] === undefined) {
+            p2BondOrder[evt.bond_idx] = p2Order++;
+          }
+        }
+      } else if (type.includes("cycle_found")) {
+        stackLog.push("Cycle!");
+      }
+    }
+
+    return {
+      atomStates,
+      p1TraversedBonds,
+      p2TraversedBonds,
+      p1BondOrder,
+      p2BondOrder,
+      p1MaxOrder: Math.max(0, p1Order - 1),
+      p2MaxOrder: Math.max(0, p2Order - 1),
+      stackLog: stackLog.slice(-16),
+    };
+  }
+
+  function drawReplay(state, curEvent) {
+    if (!VIEW_MOL || !TRACE || !TRACE.length) {
+      el.rdkitLayer.innerHTML = "";
+      return;
+    }
+
+    const COL_UNVISITED = [0.90, 0.90, 0.90];
+    const COL_ACTIVE = [0.96, 0.62, 0.04];
+    const COL_FINISHED = [0.22, 0.25, 0.32];
+    const COL_BOND_P1 = [0.06, 0.73, 0.50];
+    const COL_BOND_P2 = [0.23, 0.51, 0.96];
+    const COL_RING = [1.00, 0.00, 0.00];
+
+    const darkenColor = (base, order, maxOrder, maxDarken = 0.18) => {
+      if (maxOrder <= 0) return base;
+      const t = Math.min(1, Math.max(0, order / maxOrder));
+      const factor = t * maxDarken;
+      return base.map((c) => Math.max(0, c * (1 - factor)));
+    };
+
+    const highlightAtoms = [];
+    const highlightBonds = new Set();
+    const highlightAtomColors = {};
+    const highlightBondColors = {};
+
+    const initAtoms = TRACE[0].atoms || [];
+    for (const atom of initAtoms) {
+      highlightAtoms.push(atom.idx);
+      highlightAtomColors[atom.idx] = COL_UNVISITED;
+    }
+
+    for (const idxStr of Object.keys(state.atomStates)) {
+      const idx = Number.parseInt(idxStr, 10);
+      const st = state.atomStates[idx];
+      if (st === "GREY") highlightAtomColors[idx] = COL_ACTIVE;
+      if (st === "BLACK") highlightAtomColors[idx] = COL_FINISHED;
+    }
+
+    state.p1TraversedBonds.forEach((bidx) => {
+      highlightBonds.add(bidx);
+      const order = state.p1BondOrder[bidx] ?? 0;
+      highlightBondColors[bidx] = darkenColor(COL_BOND_P1, order, state.p1MaxOrder, 0.14);
+    });
+    state.p2TraversedBonds.forEach((bidx) => {
+      highlightBonds.add(bidx);
+      const order = state.p2BondOrder[bidx] ?? 0;
+      highlightBondColors[bidx] = darkenColor(COL_BOND_P2, order, state.p2MaxOrder, 0.18);
+    });
+
+    if (curEvent) {
+      const et = String(curEvent.event || "");
+      if (et.includes("cycle") || et.includes("match")) {
+        if (curEvent.to !== undefined) {
+          highlightAtomColors[curEvent.to] = COL_RING;
+        }
+        if (curEvent.bond_idx !== undefined) {
+          highlightBondColors[curEvent.bond_idx] = COL_RING;
+          highlightBonds.add(curEvent.bond_idx);
+        }
+      } else if (et.includes("ring_open") && curEvent.atom_idx !== undefined) {
+        highlightAtomColors[curEvent.atom_idx] = COL_RING;
+      }
+    }
+
+    const details = {
+      atoms: highlightAtoms,
+      bonds: Array.from(highlightBonds),
+      highlightAtomColors,
+      highlightBondColors,
+      width: 900,
+      height: 440,
+      addAtomIndices: true,
+      continuousHighlight: false,
+    };
+    el.rdkitLayer.innerHTML = VIEW_MOL.get_svg_with_highlights(JSON.stringify(details));
+  }
+
+  function updateReplayUI(curEvent, state, isPhase1) {
+    if (!curEvent) {
+      el.phaseBadge.textContent = "Waiting...";
+      el.phaseBadge.className = "phase-badge";
+      el.dispEvent.textContent = "-";
+      el.dispDetail.textContent = "-";
+      el.dispStack.innerHTML = "";
+      return;
+    }
+
+    if (isPhase1) {
+      el.phaseBadge.className = "phase-badge phase-1";
+      el.phaseBadge.textContent = "Phase 1: Scout";
+    } else {
+      el.phaseBadge.className = "phase-badge phase-2";
+      el.phaseBadge.textContent = "Phase 2: Build";
+    }
+
+    el.dispEvent.textContent = String(curEvent.event || "-").replace(/^(p1_|p2_)/, "");
+    const detail = { ...curEvent };
+    delete detail.event;
+    delete detail.atoms;
+    delete detail.bonds;
+    delete detail.smiles;
+    el.dispDetail.textContent = Object.keys(detail).length ? JSON.stringify(detail) : "-";
+
+    el.dispStack.innerHTML = state.stackLog.map((line) => `<li>${line}</li>`).join("");
+  }
+
+  function updateReplayStep(step) {
+    if (!TRACE || !TRACE.length) return;
+    const maxStep = TRACE.length - 1;
+    const clamped = Math.min(Math.max(step, 0), maxStep);
+
+    el.timeline.value = String(clamped);
+    el.dispStep.textContent = `${clamped}/${maxStep}`;
+
+    let liveSmiles = "";
+    for (let i = 0; i <= clamped; i++) {
+      if (TRACE[i] && TRACE[i].smiles !== undefined) {
+        liveSmiles += TRACE[i].smiles;
+      }
+    }
+    el.dispSmiles.textContent = liveSmiles || "-";
+
+    const curEvent = TRACE[clamped];
+    const isPhase1 = curEvent && (curEvent.event === "init" || String(curEvent.event).startsWith("p1_"));
+    const state = replayState(clamped);
+    drawReplay(state, curEvent);
+    updateReplayUI(curEvent, state, isPhase1);
+  }
+
+  function runClick() {
+    LAST_RUN_SIGNATURE = getRunSignature();
+    updateRunEnabled();
+
+    el.logOut.textContent = "";
+    el.traceOut.textContent = "";
+    el.initOut.textContent = "";
+
+    const smi = el.smiles.value.trim();
+    if (!smi) {
+      log("SMILES input is empty.", "bad");
+      return;
+    }
+
+    let seed;
+    try {
+      seed = ensureIntSeed(el.seed.value);
+    } catch (e) {
+      log(e.message, "bad");
+      return;
+    }
+
+    try {
+      log(`Running layer-2 engine... seed=${seed}`);
+      const out = runLayer2(smi, seed);
+      log(`Trace generated: ${out.trace.length} events`, "ok");
+      log(`Random SMILES built: ${out.randomSmiles}`, "ok");
+      log(`Random SMILES parse check: ${out.parseable ? "PASS" : "FAIL"}`, out.parseable ? "ok" : "warn");
+
+      const p1Count = out.trace.filter((e) => e.event.startsWith("p1_")).length;
+      const p2Count = out.trace.filter((e) => e.event.startsWith("p2_")).length;
+      const firstP2 = out.trace.findIndex((e) => e.event.startsWith("p2_"));
+      const lastP1 = Math.max(...out.trace.map((e, i) => e.event.startsWith("p1_") ? i : -1));
+
+      el.summary.innerHTML = [
+        `Atoms: <code>${out.nAtoms}</code> &nbsp; Bonds: <code>${out.nBonds}</code> &nbsp; Fragments: <code>${out.nFragments}</code>`,
+        `p1 events: <code>${p1Count}</code> &nbsp; p2 events: <code>${p2Count}</code>`,
+        `phase order ok: <code>${lastP1 < firstP2}</code>`,
+        `random smiles: <code>${out.randomSmiles}</code>`
+      ].join("<br>");
+
+      el.traceOut.textContent = JSON.stringify(out.trace, null, 2);
+      el.initOut.textContent = JSON.stringify(out.trace[0], null, 2);
+      setupReplay(out.trace);
+    } catch (e) {
+      log(`Run failed: ${e.message || e}`, "bad");
+      el.summary.innerHTML = `<span class="bad">Run failed.</span>`;
+      stopPlayback();
+      TRACE = null;
+      if (VIEW_MOL) {
+        VIEW_MOL.delete();
+        VIEW_MOL = null;
+      }
+      el.rdkitLayer.innerHTML = "";
+      el.dispSmiles.textContent = "-";
+      el.dispStep.textContent = "0/0";
+      setReplayEnabled(false);
+    }
+  }
+
+  window.initRDKitModule().then((inst) => {
+    RDKit = inst;
+    el.status.textContent = "Ready";
+    el.status.className = "pill ok";
+    log(`RDKit loaded (${RDKit.version ? RDKit.version() : "unknown version"})`, "ok");
+    updateRunEnabled();
+  }).catch((err) => {
+    el.status.textContent = "Load failed";
+    el.status.className = "pill bad";
+    log(`RDKit init failed: ${err.message || err}`, "bad");
+  });
+
+  el.run.addEventListener("click", runClick);
+  el.smiles.addEventListener("input", updateRunEnabled);
+  el.seed.addEventListener("input", updateRunEnabled);
+  const runOnEnter = (evt) => {
+    if (evt.key === "Enter") {
+      evt.preventDefault();
+      if (!el.run.disabled) {
+        runClick();
+      }
+    }
+  };
+  el.smiles.addEventListener("keydown", runOnEnter);
+  el.seed.addEventListener("keydown", runOnEnter);
+  el.timeline.addEventListener("input", (evt) => {
+    updateReplayStep(Number.parseInt(evt.target.value, 10) || 0);
+  });
+  el.btnPrev.addEventListener("click", () => {
+    updateReplayStep((Number.parseInt(el.timeline.value, 10) || 0) - 1);
+  });
+  el.btnNext.addEventListener("click", () => {
+    updateReplayStep((Number.parseInt(el.timeline.value, 10) || 0) + 1);
+  });
+  el.btnPlay.addEventListener("click", () => {
+    if (!TRACE || !TRACE.length) return;
+    if (PLAY_TIMER) {
+      stopPlayback();
+      return;
+    }
+    el.btnPlay.textContent = "Pause";
+    PLAY_TIMER = setInterval(() => {
+      const now = Number.parseInt(el.timeline.value, 10) || 0;
+      const maxStep = Number.parseInt(el.timeline.max, 10) || 0;
+      if (now >= maxStep) {
+        stopPlayback();
+        return;
+      }
+      updateReplayStep(now + 1);
+    }, 230);
+  });
+  window.addEventListener("beforeunload", () => {
+    stopPlayback();
+    if (VIEW_MOL) {
+      VIEW_MOL.delete();
+      VIEW_MOL = null;
+    }
+  });
+</script>
+</body>
+</html>
