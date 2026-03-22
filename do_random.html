@@ -235,6 +235,10 @@
       overflow: visible !important;
     }
 
+    #rdkit-layer svg path.note {
+      fill: #a8ccf7 !important;
+    }
+
     .live-smiles-overlay {
       position: absolute;
       top: 16px;
@@ -558,7 +562,7 @@
     <h2>How It Works</h2>
     <div class="intro-body">
       <h3>Why randomize?</h3>
-      <p>You usually want a SMILES string to be unique so everyone writes the same string for the same drug. But in machine learning, unique is bad. We actually want chaos. By generating ten different valid strings for a single molecule, we force AI models to learn the actual chemical structure rather than just memorizing text patterns.</p>
+      <p>This page illustrates the RDKit random SMILES generation algorithm (implemented in <a href="https://github.com/rdkit/rdkit/blob/master/Code/GraphMol/Canon.cpp" target="_blank" rel="noreferrer">Canon.cpp</a>). You usually want a SMILES string to be unique so everyone writes the same string for the same drug. But in machine learning, unique is bad. We actually want chaos. By generating ten different valid strings for a single molecule, we force AI models to learn the actual chemical structure rather than just memorizing text patterns.</p>
 
       <h3>The graph problem</h3>
       <p>At its core, a molecule is just a graph: atoms are nodes, bonds are edges. To write a SMILES string, the computer has to flatten that web into a single line of text by walking from atom to atom. This visualizer breaks that walk down into two steps so you can see how the computer handles the tricky parts.</p>
