@@ -612,6 +612,7 @@
     traceOut: document.getElementById('traceOut'),
     initOut: document.getElementById('initOut'),
     dispSmiles: document.getElementById('disp-smiles'),
+    canvasWrapper: document.getElementById('canvas-wrapper'),
     rdkitLayer: document.getElementById('rdkit-layer'),
     timeline: document.getElementById('timeline'),
     btnPrev: document.getElementById('btn-prev'),
@@ -650,8 +651,10 @@
   let LAST_RUN_SIGNATURE = null;
   let HAS_COMPUTED = false;
   let RUN_BLINK_TIMEOUT = null;
+  let HAS_SHIFTED_RUN_FOCUS = false;
   let HAS_BLINKED_TIMELINE = false;
   let TIMELINE_BLINK_TIMEOUT = null;
+  let TIMELINE_WHEEL_REMAINDER = 0;
 
   function log(msg, type = "info") {
     const t = new Date().toISOString().slice(11, 19);
@@ -694,10 +697,28 @@
 
     // Draw attention briefly until the first successful computation.
     el.run.classList.add("attn-blink");
+    if (!HAS_SHIFTED_RUN_FOCUS) {
+      shiftAttentionFocus(el.run);
+      HAS_SHIFTED_RUN_FOCUS = true;
+    }
     RUN_BLINK_TIMEOUT = setTimeout(() => {
       el.run.classList.remove("attn-blink");
       RUN_BLINK_TIMEOUT = null;
     }, 4500);
+  }
+
+  function shiftAttentionFocus(node, { force = false } = {}) {
+    if (!node) return;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (!node.isConnected || node.disabled) return;
+        const active = document.activeElement;
+        const focusIsIdle = !active || active === document.body || active === document.documentElement;
+        if (!force && !focusIsIdle) return;
+        node.scrollIntoView({ block: "nearest", inline: "nearest" });
+        node.focus({ preventScroll: true });
+      });
+    });
   }
 
   function triggerTimelineBlink() {
@@ -708,10 +729,51 @@
     el.timeline.classList.remove("attn-blink");
     if (el.timeline.disabled) return;
     el.timeline.classList.add("attn-blink");
+    shiftAttentionFocus(el.timeline, { force: true });
     TIMELINE_BLINK_TIMEOUT = setTimeout(() => {
       el.timeline.classList.remove("attn-blink");
       TIMELINE_BLINK_TIMEOUT = null;
     }, 3600);
+  }
+
+  function stepReplay(delta) {
+    if (!TRACE || !TRACE.length || el.timeline.disabled || !delta) return false;
+    const cur = Number.parseInt(el.timeline.value, 10) || 0;
+    const max = Number.parseInt(el.timeline.max, 10) || 0;
+    const next = Math.min(Math.max(cur + delta, 0), max);
+    if (next === cur) return false;
+    updateReplayStep(next);
+    return true;
+  }
+
+  function normalizeWheelDelta(evt) {
+    const primary = Math.abs(evt.deltaY) >= Math.abs(evt.deltaX) ? evt.deltaY : evt.deltaX;
+    if (!primary) return 0;
+    if (evt.deltaMode === WheelEvent.DOM_DELTA_LINE) return primary;
+    if (evt.deltaMode === WheelEvent.DOM_DELTA_PAGE) return primary * 6;
+    return primary / 120;
+  }
+
+  function handleReplayWheel(evt) {
+    if (!TRACE || !TRACE.length || el.timeline.disabled) return;
+    if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
+
+    const normalized = normalizeWheelDelta(evt);
+    if (!normalized) return;
+
+    TIMELINE_WHEEL_REMAINDER += normalized;
+    const wholeSteps = TIMELINE_WHEEL_REMAINDER > 0
+      ? Math.floor(TIMELINE_WHEEL_REMAINDER)
+      : Math.ceil(TIMELINE_WHEEL_REMAINDER);
+
+    if (!wholeSteps) {
+      evt.preventDefault();
+      return;
+    }
+
+    TIMELINE_WHEEL_REMAINDER -= wholeSteps;
+    stepReplay(wholeSteps);
+    evt.preventDefault();
   }
 
   function fitRandomSmilesText() {
@@ -1230,6 +1292,7 @@
   function setupReplay(trace) {
     stopPlayback();
     TRACE = trace;
+    TIMELINE_WHEEL_REMAINDER = 0;
 
     if (VIEW_MOL) {
       VIEW_MOL.delete();
@@ -1595,6 +1658,8 @@
       updateReplayStep(now + 1);
     }, 230);
   });
+  el.timeline.addEventListener("wheel", handleReplayWheel, { passive: false });
+  el.canvasWrapper.addEventListener("wheel", handleReplayWheel, { passive: false });
   window.addEventListener("beforeunload", () => {
     stopPlayback();
     if (RUN_BLINK_TIMEOUT) {
