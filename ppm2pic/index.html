@@ -78,6 +78,7 @@ let CURRENT_E = "H";
 let DATA = [];
 let IMG_BASE = "";
 let SLIDER_STEPS = 0;  // integer steps resolution for current element
+let SLIDER_WHEEL_REMAINDER = 0;
 
 function cfg() { return CONFIG[CURRENT_E]; }
 function setSliderResolution() {
@@ -97,6 +98,45 @@ function getCenterFromSlider() {
   const c = cfg();
   const u = Number($slider.value) / SLIDER_STEPS;   // 0..1
   return c.max - u * (c.max - c.min);               // invert to ppm
+}
+
+function normalizeWheelDelta(evt) {
+  const primary = Math.abs(evt.deltaY) >= Math.abs(evt.deltaX) ? evt.deltaY : evt.deltaX;
+  if (!primary) return 0;
+  if (evt.deltaMode === WheelEvent.DOM_DELTA_LINE) return primary;
+  if (evt.deltaMode === WheelEvent.DOM_DELTA_PAGE) return primary * 6;
+  return primary / 120;
+}
+
+function stepSlider(delta) {
+  if (!delta) return false;
+  const cur = Number($slider.value);
+  const min = Number($slider.min);
+  const max = Number($slider.max);
+  const next = Math.min(max, Math.max(min, cur + delta));
+  if (next === cur) return false;
+  $slider.value = String(next);
+  update();
+  return true;
+}
+
+function handleSliderWheel(evt) {
+  const normalized = normalizeWheelDelta(evt);
+  if (!normalized) return;
+
+  SLIDER_WHEEL_REMAINDER += normalized;
+  const wholeSteps = SLIDER_WHEEL_REMAINDER > 0
+    ? Math.floor(SLIDER_WHEEL_REMAINDER)
+    : Math.ceil(SLIDER_WHEEL_REMAINDER);
+
+  if (!wholeSteps) {
+    evt.preventDefault();
+    return;
+  }
+
+  SLIDER_WHEEL_REMAINDER -= wholeSteps;
+  stepSlider(wholeSteps);
+  evt.preventDefault();
 }
 
 function applySlider(E) {
@@ -199,6 +239,7 @@ function update() {
     update();
 
     $slider.addEventListener("input", update);
+    $slider.addEventListener("wheel", handleSliderWheel, { passive: false });
     $elt.addEventListener("change", async () => {
       applySlider($elt.value);
       await loadData($elt.value);
